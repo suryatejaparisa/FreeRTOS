@@ -1,0 +1,631 @@
+1.)/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Source/include/FreeRTOS.h
+
+#ifndef configUSE_LST_SCHEDULER
+	#define configUSE_LST_SCHEDULER 1
+#endif
+	or
+/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Project/FreeRTOSconfig.h		
+#define configUSE_LST_SCHEDULER		1
+
+
+
+
+2.)/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Source/task.c
+
+Firstly, the new Ready List is declared: xReadyTasksListLST is a simple list.
+
+/* E.C. : the new RedyList */
+#if ( configUSE_LST_SCHEDULER == 1 )
+
+PRIVILEGED_DATA static List_t xReadyTasksListLST;
+/*< Ready tasks ordered
+by their deadline. */
+#endif	
+
+
+
+3.)/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Source/task.c
+/*the prvInitialiseTaskLists() method, that initialize all the task lists at the creation of
+the first task, is modified adding the initialization of xReadyT asksListLST*/
+
+
+	/* E.C. */
+	#if ( configUSE_LST_SCHEDULER == 1 )
+	{
+	vListInitialise( &xReadyTasksListLST );
+	}
+	#endif	
+
+
+	
+4.)/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Source/task.c
+//1st change not worked as the modifications are specific to the FreeRTOS 8.2 version which xStateListItem is used instead of xGenericListIteam
+/*
+* Place the task represented by pxTCB into the appropriate ready list for
+* the task. It is inserted at the end of the list.
+*/
+
+#if configUSE_LST_SCHEDULER == 0 /* E.C. : */
+#define 
+	prvAddTaskToReadyList( pxTCB )
+						\
+			\
+vListInsertEnd( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ), &( ( pxTCB
+
+	)->xGenericListItem ) );
+#else
+	#define prvAddTaskToReadyList( pxTCB ) /*xGenericListIteam must contain the
+deadline value */	
+\
+vListInsert( &(xReadyTasksListLST), &( ( pxTCB )->xGenericListItem ) );
+
+#endif
+
+
+
+//2nd change worked
+
+/*
+ * Place the task represented by pxTCB into the appropriate ready list for
+ * the task.  It is inserted at the end of the list.
+ */
+ 
+#if (configUSE_LST_SCHEDULER == 0)
+	#define prvAddTaskToReadyList( pxTCB )																\
+		traceMOVED_TASK_TO_READY_STATE( pxTCB );														\
+		taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );												\
+		vListInsertEnd( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ), &( ( pxTCB )->xStateListItem ) ) \
+		tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB )
+#else
+	#define prvAddTaskToReadyList( pxTCB )																\
+		traceMOVED_TASK_TO_READY_STATE( pxTCB );														\
+		taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );												\
+		vListInsert( &(xReadyTasksListLST), &( ( pxTCB )->xStateListItem ) ) \
+		tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB )
+#endif	
+/*generally FreeRTOS pushes the tasks at the end of the readylist but in LST the tasks will be push into the front of the readylist 
+when a task moves to the Ready List, the knowledge of its next deadline is needed in
+order to insert it in the correct position. The deadline is calculated as: TASK deadline =
+tick cur + TASK period */
+
+
+
+
+
+5.)/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Source/task.c
+
+	/* E.C. : the period of a task */
+	#if ( configUSE_LST_SCHEDULER == 1 )
+	TickType_t xTaskPeriod;	/*< Stores the period in tick of the task. > */
+	TickType_t xTaskCapacity; 	/*< Stores the Capacity in tick of the task. > */
+	#endif
+	
+
+
+6.)/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Source/task.c
+a new initialization task method is created. xTaskPeriodicCreate() is a modified
+version of the standard method xT askGenericCreate() that receives the task
+period as additional input parameter and set the xTaskPeriod variable in the task TCB struc-
+ture. Before adding the new task to the Ready List by calling prvAddTaskToReadyList(), the
+task’s xGenericListItem is initialized to the value of the next task deadline.
+
+/*E.C. : */
+BaseType_t xTaskPeriodicCreate( ... , TickType_t period )
+{
+
+
+/*E.C. : initialize the period */
+pxNewTCB->xTaskPeriod = period;
+
+/*E.C. : insert the period value in the generic list iteam before to add thetask in RL: */
+listSET_LIST_ITEM_VALUE( &( ( pxNewTCB )->xGenericListItem ), ( pxNewTCB
+
+)->xTaskPeriod + currentTick);
+
+prvAddTaskToReadyList( pxNewTCB );
+
+}
+
+
+
+
+
+7.)/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Source/task.c
+
+	/*E.C. : */
+	#if( configUSE_LST_SCHEDULER == 1 )
+	BaseType_t xTaskCreatePeriodic(	TaskFunction_t pxTaskCode,
+							const char * const pcName,		/*lint !e971 Unqualified char types are allowed for strings and single characters only. */
+							const configSTACK_DEPTH_TYPE usStackDepth,
+							void * const pvParameters,
+							UBaseType_t uxPriority,
+							TaskHandle_t * const pxCreatedTask,
+							TickType_t period ,TickType_t capacity)
+	{
+	TCB_t *pxNewTCB;
+	BaseType_t xReturn;
+
+		/* If the stack grows down then allocate the stack then the TCB so the stack
+		does not grow into the TCB.  Likewise if the stack grows up then allocate
+		the TCB then the stack. */
+		#if( portSTACK_GROWTH > 0 )
+		{
+			/* Allocate space for the TCB.  Where the memory comes from depends on
+			the implementation of the port malloc function and whether or not static
+			allocation is being used. */
+			pxNewTCB = ( TCB_t * ) pvPortMalloc( sizeof( TCB_t ) );
+
+			if( pxNewTCB != NULL )
+			{
+				/* Allocate space for the stack used by the task being created.
+				The base of the stack memory stored in the TCB so the task can
+				be deleted later if required. */
+				pxNewTCB->pxStack = ( StackType_t * ) pvPortMalloc( ( ( ( size_t ) usStackDepth ) * sizeof( StackType_t ) ) ); /*lint !e961 MISRA exception as the casts are only redundant for some ports. */
+
+				if( pxNewTCB->pxStack == NULL )
+				{
+					/* Could not allocate the stack.  Delete the allocated TCB. */
+					vPortFree( pxNewTCB );
+					pxNewTCB = NULL;
+				}
+			}
+		}
+		#else /* portSTACK_GROWTH */
+		{
+		StackType_t *pxStack;
+
+			/* Allocate space for the stack used by the task being created. */
+			pxStack = ( StackType_t * ) pvPortMalloc( ( ( ( size_t ) usStackDepth ) * sizeof( StackType_t ) ) ); /*lint !e961 MISRA exception as the casts are only redundant for some ports. */
+
+			if( pxStack != NULL )
+			{
+				/* Allocate space for the TCB. */
+				pxNewTCB = ( TCB_t * ) pvPortMalloc( sizeof( TCB_t ) ); /*lint !e961 MISRA exception as the casts are only redundant for some paths. */
+
+				if( pxNewTCB != NULL )
+				{
+					/* Store the stack location in the TCB. */
+					pxNewTCB->pxStack = pxStack;
+				}
+				else
+				{
+					/* The stack cannot be used as the TCB was not created.  Free
+					it again. */
+					vPortFree( pxStack );
+				}
+			}
+			else
+			{
+				pxNewTCB = NULL;
+			}
+		}
+		#endif /* portSTACK_GROWTH */
+
+		if( pxNewTCB != NULL )
+		{
+			#if( tskSTATIC_AND_DYNAMIC_ALLOCATION_POSSIBLE != 0 ) /*lint !e731 Macro has been consolidated for readability reasons. */
+			{
+				/* Tasks can be created statically or dynamically, so note this
+				task was created dynamically in case it is later deleted. */
+				pxNewTCB->ucStaticallyAllocated = tskDYNAMICALLY_ALLOCATED_STACK_AND_TCB;
+			}
+			#endif /* configSUPPORT_STATIC_ALLOCATION */
+
+			pxNewTCB->xTaskPeriod = period; //changes vs xTaskCreate
+			pxNewTCB->xTaskCapacity = capacity;
+			
+			
+			prvInitialiseNewTask( pxTaskCode, pcName, ( uint32_t ) usStackDepth, pvParameters, uxPriority, pxCreatedTask, pxNewTCB, NULL );
+			TickType_t xTicks;
+
+			/* Critical section required if running on a 16 bit processor. */
+			portTICK_TYPE_ENTER_CRITICAL();
+			{
+				xTicks = xTickCount;
+			}
+			portTICK_TYPE_EXIT_CRITICAL();
+			listSET_LIST_ITEM_VALUE(&( ( pxNewTCB )->xStateListItem ), ( pxNewTCB)->xTaskPeriod - xTicks - ( pxNewTCB)->xTaskCapacity);
+			
+
+			prvAddNewTaskToReadyList( pxNewTCB );
+			xReturn = pdPASS;
+		}
+		else
+		{
+			xReturn = errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY;
+		}
+
+		return xReturn;
+	}
+	#endif
+
+
+
+
+
+8.)/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Source/task.c
+We assume that no
+task can have a period greater than initIDLEP eriod: in this way, when the IDLE task is
+added to the Ready List, it will be at the last position of the list, since its deadline will be
+greater than any other task ( TASK deadline = tick cur + TASK period , with tick cur = 0 and
+IDLE period = initIDLEP eriod greater than any other task period).
+
+		/* The Idle task is being created using dynamically allocated RAM. */
+		#if(configUSE_LST_SCHEDULER == 1)
+			TickType_t initIDLEPeriod = 10000;
+			xReturn = xTaskCreatePeriodic(	prvIdleTask,
+								configIDLE_TASK_NAME,
+								configMINIMAL_STACK_SIZE,
+								( void * ) NULL,
+								( tskIDLE_PRIORITY | portPRIVILEGE_BIT ),
+								NULL, initIDLEPeriod );
+
+		#else
+		xReturn = xTaskCreate(	prvIdleTask,
+								configIDLE_TASK_NAME,
+								configMINIMAL_STACK_SIZE,
+								( void * ) NULL,
+								( tskIDLE_PRIORITY | portPRIVILEGE_BIT ),
+								&xIdleTaskHandle ); 
+		#endif		
+	
+9.)  /home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Source/task.c
+
+		/* Select a new task to run using either the generic C or port
+		optimised asm code. */
+		#if ( configUSE_LST_SCHEDULER == 0 )
+		{
+			taskSELECT_HIGHEST_PRIORITY_TASK();
+		}
+		#else
+		{
+			pxCurrentTCB = (TCB_t * ) listGET_OWNER_OF_HEAD_ENTRY( &(xReadyTasksListLST ) );
+		}
+		#endif
+		
+
+		
+/*These are all changes made in Task.c file
+
+
+
+10.)/home/surya/Desktop/sem2/rts/pmvankerFreeRTOS/Project/main.c
+
+//-------------------------------------------------
+// Global Variables
+//-------------------------------------------------
+#define CH3_TASKMANAGEMENT
+#define CAPACITY 10
+#define APeriod 30
+#define BPeriod 70
+
+/* --------------------------------------------- */
+	
+//-------------------------------------------------
+// Tasks Protopies
+//-------------------------------------------------
+
+#ifdef CH3_TASKMANAGEMENT
+#if ( configUSE_LST_SCHEDULER == 0 )
+void vTask1(void*);
+void vTask2(void*);
+void vTask3(void*);
+void vTask4(void*);
+#else
+void Task_Exec_A(void*);
+void Task_Exec_B(void*);
+#endif
+
+#endif
+
+
+
+
+#if ( configUSE_LST_SCHEDULER == 1 )
+	xTaskCreatePeriodic( Task_Exec_A, "Task A", 1000, NULL, 1, NULL, 5 );
+	xTaskCreatePeriodic( Task_Exec_B, "Task B", 1000, NULL, 1, NULL, 8 );
+	#else
+	xTaskCreate( vTask3, "Task 3", 1000, NULL, 1, NULL );
+	xTaskCreate( vTask4, "Task 4", 1000, NULL, 1, NULL );
+	#endif
+	
+#else
+void Task_Exec_A(void* parameter)
+{
+	TickType_t xLastWakeTimeA;
+	const TickType_t xFrequency = APeriod; //tsk A frequency
+	volatile int count = CAPACITY;     //tsk A capacity
+	xLastWakeTimeA = 0;
+	while(1)
+	{	
+		printf("At Time of %04d Ticks-->Task A In with start  %3d\n", xTaskGetTickCount (), APeriod * (ANumberOfPeriod - 1));
+		TickType_t xTime = xTaskGetTickCount ();
+		TickType_t x;
+		while(count != 0)
+		{
+			if(( x = xTaskGetTickCount () ) > xTime)
+			{
+				xTime = x;
+				count--;
+			}
+		}
+		printf("At Time of %04d Ticks-->Task A Out with deadLine  %3d\n", xTaskGetTickCount (), APeriod* ANumberOfPeriod);
+		ANumberOfPeriod += 1;
+		count = CAPACITY;
+		vTaskDelayUntil( &xLastWakeTimeA, xFrequency );
+	}
+	
+}
+void Task_Exec_B(void* parameter)
+{
+	TickType_t xLastWakeTimeB;
+	const TickType_t xFrequency = BPeriod; //tsk B frequency
+	volatile int count = CAPACITY;     //tsk B capacity
+	xLastWakeTimeB = 0;
+	while(1)
+	{
+		printf("At Time of %04d Ticks-->Task B In with start  %3d\n", xTaskGetTickCount (), BPeriod*(BNumberOfPeriod - 1));
+		TickType_t xTime = xTaskGetTickCount ();
+		TickType_t x;
+		while(count != 0)
+		{
+			if(( x = xTaskGetTickCount () ) > xTime)
+			{
+				xTime = x;
+				count--;
+			}
+		}
+		printf("At Time of %04d Ticks-->Task B Out with deadLine  %3d\n", xTaskGetTickCount (), BPeriod*BNumberOfPeriod);
+		BNumberOfPeriod += 1;
+		count = 2*CAPACITY;
+		vTaskDelayUntil( &xLastWakeTimeB, xFrequency );
+	}
+}
+
+LST_output text
+
+Running as PID: 33457
+Timer Resolution for Run TimeStats is 100 ticks per second.
+At Time of 0000 Ticks-->Task A In with start    0
+At Time of 0010 Ticks-->Task A Out with deadLine   30
+At Time of 0010 Ticks-->Task B In with start    0
+At Time of 0020 Ticks-->Task B Out with deadLine   70
+At Time of 0030 Ticks-->Task A In with start   30
+At Time of 0040 Ticks-->Task A Out with deadLine   60
+At Time of 0060 Ticks-->Task A In with start   60
+At Time of 0070 Ticks-->Task A Out with deadLine   90
+At Time of 0070 Ticks-->Task B In with start   70
+At Time of 0090 Ticks-->Task B Out with deadLine  140
+At Time of 0090 Ticks-->Task A In with start   90
+At Time of 0100 Ticks-->Task A Out with deadLine  120
+At Time of 0120 Ticks-->Task A In with start  120
+At Time of 0130 Ticks-->Task A Out with deadLine  150
+At Time of 0140 Ticks-->Task B In with start  140
+At Time of 0160 Ticks-->Task B Out with deadLine  210
+At Time of 0160 Ticks-->Task A In with start  150
+At Time of 0170 Ticks-->Task A Out with deadLine  180
+At Time of 0180 Ticks-->Task A In with start  180
+At Time of 0190 Ticks-->Task A Out with deadLine  210
+At Time of 0210 Ticks-->Task B In with start  210
+At Time of 0230 Ticks-->Task B Out with deadLine  280
+At Time of 0230 Ticks-->Task A In with start  210
+At Time of 0240 Ticks-->Task A Out with deadLine  240
+At Time of 0240 Ticks-->Task A In with start  240
+At Time of 0250 Ticks-->Task A Out with deadLine  270
+At Time of 0270 Ticks-->Task A In with start  270
+At Time of 0280 Ticks-->Task A Out with deadLine  300
+At Time of 0280 Ticks-->Task B In with start  280
+At Time of 0300 Ticks-->Task B Out with deadLine  350
+At Time of 0300 Ticks-->Task A In with start  300
+At Time of 0310 Ticks-->Task A Out with deadLine  330
+At Time of 0330 Ticks-->Task A In with start  330
+At Time of 0340 Ticks-->Task A Out with deadLine  360
+At Time of 0350 Ticks-->Task B In with start  350
+At Time of 0370 Ticks-->Task B Out with deadLine  420
+At Time of 0370 Ticks-->Task A In with start  360
+At Time of 0380 Ticks-->Task A Out with deadLine  390
+At Time of 0390 Ticks-->Task A In with start  390
+At Time of 0400 Ticks-->Task A Out with deadLine  420
+At Time of 0420 Ticks-->Task B In with start  420
+At Time of 0440 Ticks-->Task B Out with deadLine  490
+At Time of 0440 Ticks-->Task A In with start  420
+At Time of 0450 Ticks-->Task A Out with deadLine  450
+At Time of 0450 Ticks-->Task A In with start  450
+At Time of 0460 Ticks-->Task A Out with deadLine  480
+At Time of 0480 Ticks-->Task A In with start  480
+At Time of 0490 Ticks-->Task A Out with deadLine  510
+At Time of 0490 Ticks-->Task B In with start  490
+At Time of 0510 Ticks-->Task B Out with deadLine  560
+At Time of 0510 Ticks-->Task A In with start  510
+At Time of 0520 Ticks-->Task A Out with deadLine  540
+At Time of 0540 Ticks-->Task A In with start  540
+At Time of 0550 Ticks-->Task A Out with deadLine  570
+At Time of 0560 Ticks-->Task B In with start  560
+At Time of 0580 Ticks-->Task B Out with deadLine  630
+At Time of 0580 Ticks-->Task A In with start  570
+At Time of 0590 Ticks-->Task A Out with deadLine  600
+At Time of 0600 Ticks-->Task A In with start  600
+At Time of 0610 Ticks-->Task A Out with deadLine  630
+At Time of 0630 Ticks-->Task B In with start  630
+At Time of 0650 Ticks-->Task B Out with deadLine  700
+At Time of 0650 Ticks-->Task A In with start  630
+At Time of 0660 Ticks-->Task A Out with deadLine  660
+At Time of 0660 Ticks-->Task A In with start  660
+At Time of 0670 Ticks-->Task A Out with deadLine  690
+At Time of 0690 Ticks-->Task A In with start  690
+At Time of 0700 Ticks-->Task A Out with deadLine  720
+At Time of 0700 Ticks-->Task B In with start  700
+At Time of 0720 Ticks-->Task B Out with deadLine  770
+At Time of 0720 Ticks-->Task A In with start  720
+At Time of 0730 Ticks-->Task A Out with deadLine  750
+At Time of 0750 Ticks-->Task A In with start  750
+At Time of 0760 Ticks-->Task A Out with deadLine  780
+At Time of 0770 Ticks-->Task B In with start  770
+At Time of 0790 Ticks-->Task B Out with deadLine  840
+At Time of 0790 Ticks-->Task A In with start  780
+At Time of 0800 Ticks-->Task A Out with deadLine  810
+At Time of 0810 Ticks-->Task A In with start  810
+At Time of 0820 Ticks-->Task A Out with deadLine  840
+At Time of 0840 Ticks-->Task B In with start  840
+At Time of 0860 Ticks-->Task B Out with deadLine  910
+At Time of 0860 Ticks-->Task A In with start  840
+At Time of 0870 Ticks-->Task A Out with deadLine  870
+At Time of 0870 Ticks-->Task A In with start  870
+At Time of 0880 Ticks-->Task A Out with deadLine  900
+At Time of 0900 Ticks-->Task A In with start  900
+At Time of 0910 Ticks-->Task A Out with deadLine  930
+At Time of 0910 Ticks-->Task B In with start  910
+At Time of 0930 Ticks-->Task B Out with deadLine  980
+At Time of 0930 Ticks-->Task A In with start  930
+At Time of 0940 Ticks-->Task A Out with deadLine  960
+At Time of 0960 Ticks-->Task A In with start  960
+At Time of 0970 Ticks-->Task A Out with deadLine  990
+At Time of 0980 Ticks-->Task B In with start  980
+At Time of 1000 Ticks-->Task B Out with deadLine  1050
+At Time of 1000 Ticks-->Task A In with start  990
+At Time of 1010 Ticks-->Task A Out with deadLine  1020
+At Time of 1020 Ticks-->Task A In with start  1020
+At Time of 1030 Ticks-->Task A Out with deadLine  1050
+At Time of 1050 Ticks-->Task B In with start  1050
+At Time of 1070 Ticks-->Task B Out with deadLine  1120
+At Time of 1070 Ticks-->Task A In with start  1050
+At Time of 1080 Ticks-->Task A Out with deadLine  1080
+At Time of 1080 Ticks-->Task A In with start  1080
+At Time of 1090 Ticks-->Task A Out with deadLine  1110
+At Time of 1110 Ticks-->Task A In with start  1110
+At Time of 1120 Ticks-->Task A Out with deadLine  1140
+At Time of 1120 Ticks-->Task B In with start  1120
+At Time of 1140 Ticks-->Task B Out with deadLine  1190
+At Time of 1140 Ticks-->Task A In with start  1140
+At Time of 1150 Ticks-->Task A Out with deadLine  1170
+At Time of 1170 Ticks-->Task A In with start  1170
+At Time of 1180 Ticks-->Task A Out with deadLine  1200
+At Time of 1190 Ticks-->Task B In with start  1190
+At Time of 1210 Ticks-->Task B Out with deadLine  1260
+At Time of 1210 Ticks-->Task A In with start  1200
+At Time of 1220 Ticks-->Task A Out with deadLine  1230
+At Time of 1230 Ticks-->Task A In with start  1230
+At Time of 1240 Ticks-->Task A Out with deadLine  1260
+At Time of 1260 Ticks-->Task B In with start  1260
+At Time of 1280 Ticks-->Task B Out with deadLine  1330
+At Time of 1280 Ticks-->Task A In with start  1260
+At Time of 1290 Ticks-->Task A Out with deadLine  1290
+At Time of 1290 Ticks-->Task A In with start  1290
+At Time of 1300 Ticks-->Task A Out with deadLine  1320
+At Time of 1320 Ticks-->Task A In with start  1320
+At Time of 1330 Ticks-->Task A Out with deadLine  1350
+At Time of 1330 Ticks-->Task B In with start  1330
+At Time of 1350 Ticks-->Task B Out with deadLine  1400
+At Time of 1350 Ticks-->Task A In with start  1350
+At Time of 1360 Ticks-->Task A Out with deadLine  1380
+At Time of 1380 Ticks-->Task A In with start  1380
+At Time of 1390 Ticks-->Task A Out with deadLine  1410
+At Time of 1400 Ticks-->Task B In with start  1400
+At Time of 1420 Ticks-->Task B Out with deadLine  1470
+At Time of 1420 Ticks-->Task A In with start  1410
+At Time of 1430 Ticks-->Task A Out with deadLine  1440
+At Time of 1440 Ticks-->Task A In with start  1440
+At Time of 1450 Ticks-->Task A Out with deadLine  1470
+At Time of 1470 Ticks-->Task B In with start  1470
+At Time of 1490 Ticks-->Task B Out with deadLine  1540
+At Time of 1490 Ticks-->Task A In with start  1470
+At Time of 1500 Ticks-->Task A Out with deadLine  1500
+At Time of 1500 Ticks-->Task A In with start  1500
+At Time of 1510 Ticks-->Task A Out with deadLine  1530
+At Time of 1530 Ticks-->Task A In with start  1530
+At Time of 1540 Ticks-->Task A Out with deadLine  1560
+At Time of 1540 Ticks-->Task B In with start  1540
+At Time of 1560 Ticks-->Task B Out with deadLine  1610
+At Time of 1560 Ticks-->Task A In with start  1560
+At Time of 1570 Ticks-->Task A Out with deadLine  1590
+At Time of 1590 Ticks-->Task A In with start  1590
+At Time of 1600 Ticks-->Task A Out with deadLine  1620
+At Time of 1610 Ticks-->Task B In with start  1610
+At Time of 1630 Ticks-->Task B Out with deadLine  1680
+At Time of 1630 Ticks-->Task A In with start  1620
+At Time of 1640 Ticks-->Task A Out with deadLine  1650
+At Time of 1650 Ticks-->Task A In with start  1650
+At Time of 1660 Ticks-->Task A Out with deadLine  1680
+At Time of 1680 Ticks-->Task B In with start  1680
+At Time of 1700 Ticks-->Task B Out with deadLine  1750
+At Time of 1700 Ticks-->Task A In with start  1680
+At Time of 1710 Ticks-->Task A Out with deadLine  1710
+At Time of 1710 Ticks-->Task A In with start  1710
+At Time of 1720 Ticks-->Task A Out with deadLine  1740
+At Time of 1740 Ticks-->Task A In with start  1740
+At Time of 1750 Ticks-->Task A Out with deadLine  1770
+At Time of 1750 Ticks-->Task B In with start  1750
+At Time of 1770 Ticks-->Task B Out with deadLine  1820
+At Time of 1770 Ticks-->Task A In with start  1770
+At Time of 1780 Ticks-->Task A Out with deadLine  1800
+At Time of 1800 Ticks-->Task A In with start  1800
+At Time of 1810 Ticks-->Task A Out with deadLine  1830
+At Time of 1820 Ticks-->Task B In with start  1820
+At Time of 1840 Ticks-->Task B Out with deadLine  1890
+At Time of 1840 Ticks-->Task A In with start  1830
+At Time of 1850 Ticks-->Task A Out with deadLine  1860
+At Time of 1860 Ticks-->Task A In with start  1860
+At Time of 1870 Ticks-->Task A Out with deadLine  1890
+At Time of 1890 Ticks-->Task B In with start  1890
+At Time of 1910 Ticks-->Task B Out with deadLine  1960
+At Time of 1910 Ticks-->Task A In with start  1890
+At Time of 1920 Ticks-->Task A Out with deadLine  1920
+At Time of 1920 Ticks-->Task A In with start  1920
+At Time of 1930 Ticks-->Task A Out with deadLine  1950
+At Time of 1950 Ticks-->Task A In with start  1950
+At Time of 1960 Ticks-->Task A Out with deadLine  1980
+At Time of 1960 Ticks-->Task B In with start  1960
+At Time of 1980 Ticks-->Task B Out with deadLine  2030
+At Time of 1980 Ticks-->Task A In with start  1980
+At Time of 1990 Ticks-->Task A Out with deadLine  2010
+At Time of 2010 Ticks-->Task A In with start  2010
+At Time of 2020 Ticks-->Task A Out with deadLine  2040
+At Time of 2030 Ticks-->Task B In with start  2030
+At Time of 2050 Ticks-->Task B Out with deadLine  2100
+At Time of 2050 Ticks-->Task A In with start  2040
+At Time of 2060 Ticks-->Task A Out with deadLine  2070
+At Time of 2070 Ticks-->Task A In with start  2070
+At Time of 2080 Ticks-->Task A Out with deadLine  2100
+At Time of 2100 Ticks-->Task B In with start  2100
+At Time of 2120 Ticks-->Task B Out with deadLine  2170
+At Time of 2120 Ticks-->Task A In with start  2100
+At Time of 2130 Ticks-->Task A Out with deadLine  2130
+At Time of 2130 Ticks-->Task A In with start  2130
+At Time of 2140 Ticks-->Task A Out with deadLine  2160
+At Time of 2160 Ticks-->Task A In with start  2160
+At Time of 2170 Ticks-->Task A Out with deadLine  2190
+At Time of 2170 Ticks-->Task B In with start  2170
+At Time of 2190 Ticks-->Task B Out with deadLine  2240
+At Time of 2190 Ticks-->Task A In with start  2190
+At Time of 2200 Ticks-->Task A Out with deadLine  2220
+At Time of 2220 Ticks-->Task A In with start  2220
+At Time of 2230 Ticks-->Task A Out with deadLine  2250
+At Time of 2240 Ticks-->Task B In with start  2240
+At Time of 2260 Ticks-->Task B Out with deadLine  2310
+At Time of 2260 Ticks-->Task A In with start  2250
+At Time of 2270 Ticks-->Task A Out with deadLine  2280
+At Time of 2280 Ticks-->Task A In with start  2280
+At Time of 2290 Ticks-->Task A Out with deadLine  2310
+At Time of 2310 Ticks-->Task B In with start  2310
+At Time of 2330 Ticks-->Task B Out with deadLine  2380
+At Time of 2330 Ticks-->Task A In with start  2310
+At Time of 2340 Ticks-->Task A Out with deadLine  2340
+At Time of 2340 Ticks-->Task A In with start  2340
+At Time of 2350 Ticks-->Task A Out with deadLine  2370
+At Time of 2370 Ticks-->Task A In with start  2370
+At Time of 2380 Ticks-->Task A Out with deadLine  2400
+At Time of 2380 Ticks-->Task B In with start  2380
+At Time of 2400 Ticks-->Task B Out with deadLine  2450
+At Time of 2400 Ticks-->Task A In with start  2400
+At Time of 2410 Ticks-->Task A Out with deadLine  2430
+
+
+
+
+
+
+
+
+
+
+
